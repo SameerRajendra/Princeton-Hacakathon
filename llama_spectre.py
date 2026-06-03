@@ -19,7 +19,7 @@ class SpectreLlamaLayerWrapper(nn.Module):
             num_heads=config.num_attention_heads,
             n_fft=n_fft,
             mlp_ratio=4,          
-            use_toeplitz=False,   # <-- Set to False to prevent spectre.py crash
+            use_toeplitz=False,   # Keep False for your dynamic injection
             pooling_type="dct",
             wavelet_on_rate=0.1
         )
@@ -34,12 +34,19 @@ class SpectreLlamaLayerWrapper(nn.Module):
         use_cache=False,
         **kwargs
     ):
-        # Pass only the hidden states (B, N, d) to the SpectreBlock
-        out = self.spectre(hidden_states)
+        # 1. Capture the incoming dtype (BFloat16)
+        orig_dtype = hidden_states.dtype
         
-        # Hugging Face expects a tuple output from each layer
-        return (out,) 
-
+        # 2. Cast to Float32 for stable FFTs, complex math, and standard LayerNorms
+        hidden_states_f32 = hidden_states.to(torch.float32)
+        
+        # 3. Process through the SPECTRE block
+        out_f32 = self.spectre(hidden_states_f32)
+        
+        # 4. Cast back to the original dtype before returning to the LLaMA pipeline
+        out = out_f32.to(orig_dtype)
+        
+        return (out,)
 # -----------------------------------------------------------------------
 # 2. Model Initialization & Architecture Swap
 # -----------------------------------------------------------------------
