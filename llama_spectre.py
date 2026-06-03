@@ -12,20 +12,14 @@ from spectre import SpectreBlock
 # 1. Hugging Face Compatibility Wrapper
 # -----------------------------------------------------------------------
 class SpectreLlamaLayerWrapper(nn.Module):
-    """
-    Wraps the frequency-domain SpectreBlock to safely catch and discard 
-    standard Hugging Face kwargs (like attention_mask, position_ids) 
-    that are normally passed to a standard Llama attention layer.
-    """
     def __init__(self, config, n_fft):
         super().__init__()
-        # For Llama-3.2-1B: hidden_size=2048, num_attention_heads=32
         self.spectre = SpectreBlock(
             embed_dim=config.hidden_size,
             num_heads=config.num_attention_heads,
             n_fft=n_fft,
             mlp_ratio=4,          
-            use_toeplitz=True,    
+            use_toeplitz=False,   # <-- Set to False to prevent spectre.py crash
             pooling_type="dct",
             wavelet_on_rate=0.1
         )
