@@ -34,23 +34,24 @@ class SpectreLlamaLayerWrapper(nn.Module):
         use_cache=False,
         **kwargs
     ):
-        # SAFETY NET: Unpack if Hugging Face accidentally passes a tuple
+        # SAFETY NET: Unpack just in case the first embedding layer hands us a tuple
         if isinstance(hidden_states, tuple):
             hidden_states = hidden_states[0]
             
         # 1. Capture the incoming dtype (BFloat16)
         orig_dtype = hidden_states.dtype
         
-        # 2. Cast to Float32 for stable FFTs, complex math, and standard LayerNorms
+        # 2. Cast to Float32 for stable FFTs and complex math
         hidden_states_f32 = hidden_states.to(torch.float32)
         
         # 3. Process through the SPECTRE block
         out_f32 = self.spectre(hidden_states_f32)
         
-        # 4. Cast back to the original dtype before returning to the LLaMA pipeline
+        # 4. Cast back to the original dtype
         out = out_f32.to(orig_dtype)
         
-        return (out,)
+        # 5. RETURN RAW TENSOR (Removed the tuple packaging)
+        return out
 # -----------------------------------------------------------------------
 # 2. Model Initialization & Architecture Swap
 # -----------------------------------------------------------------------
