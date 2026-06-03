@@ -97,15 +97,15 @@ def main():
     
     # Warmup steps allow the PyTorch CUDA memory allocator to settle
     # This prevents profiling artifacts related to initial memory allocation
-    warmup_steps = 3
-    profile_steps = 5
+    warmup_steps = 4
+    profile_steps = 10000000
     
     model.train()
     print("Starting training loop...")
     
     for step, batch in enumerate(dataset):
-        # if step >= warmup_steps + profile_steps:
-        #     break
+        if step >= warmup_steps + profile_steps:
+            break
             
         # Tokenize sequence
         tokens = tokenizer(
@@ -124,27 +124,27 @@ def main():
             print("Warmup complete. Starting Nsight capture...")
             torch.cuda.cudart().cudaProfilerStart()
 
-        # # NVTX Marker: Full Step
-        # nvtx.range_push(f"Step_{step}")
+        # NVTX Marker: Full Step
+        nvtx.range_push(f"Step_{step}")
         
-        # # NVTX Marker: Forward Pass
-        # nvtx.range_push("Forward_Pass")
+        # NVTX Marker: Forward Pass
+        nvtx.range_push("Forward_Pass")
         outputs = model(input_ids=input_ids, labels=labels)
         loss = outputs.loss
-        # nvtx.range_pop() 
+        nvtx.range_pop() 
 
-        # # NVTX Marker: Backward Pass
-        # nvtx.range_push("Backward_Pass")
+        # NVTX Marker: Backward Pass
+        nvtx.range_push("Backward_Pass")
         loss.backward()
-        # nvtx.range_pop() 
+        nvtx.range_pop() 
 
         # NVTX Marker: Optimizer
-        # nvtx.range_push("Optimizer_Step")
+        nvtx.range_push("Optimizer_Step")
         optimizer.step()
         optimizer.zero_grad()
-        # nvtx.range_pop() 
+        nvtx.range_pop() 
         
-        # nvtx.range_pop() # End Step
+        nvtx.range_pop() # End Step
         
         print(f"Step {step} | Loss: {loss.item():.4f}")
 
