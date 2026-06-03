@@ -26,7 +26,7 @@ class SpectreLlamaLayerWrapper(nn.Module):
 
     def forward(
         self,
-        hidden_states: torch.Tensor,
+        hidden_states,
         attention_mask=None,
         position_ids=None,
         past_key_value=None,
@@ -34,6 +34,10 @@ class SpectreLlamaLayerWrapper(nn.Module):
         use_cache=False,
         **kwargs
     ):
+        # SAFETY NET: Unpack if Hugging Face accidentally passes a tuple
+        if isinstance(hidden_states, tuple):
+            hidden_states = hidden_states[0]
+            
         # 1. Capture the incoming dtype (BFloat16)
         orig_dtype = hidden_states.dtype
         
