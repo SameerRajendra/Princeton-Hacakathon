@@ -5,10 +5,72 @@ from datasets import load_dataset
 from torch.optim import AdamW
 from accelerate import Accelerator
 import pandas as pd
+import os
+
+os.environ["CUDA_HOME"] = "/cm/shared/apps/cuda12.4/toolkit/12.4.1"
 
 # Import your native PyTorch SPECTRE block
 from spectre import SpectreBlock
+# =======================================================================
+# HOTFIX: Monkey-Patch PyTorch Ops for FSDP BFloat16 Compatibility
+# =======================================================================
+import torch
+import torch.nn.functional as F
 
+_orig_rfft = torch.fft.rfft
+_orig_irfft = torch.fft.irfft
+_orig_view_as_complex = torch.view_as_complex
+_orig_complex = torch.complex
+_orig_conv1d = F.conv1d
+_orig_conv_transpose1d = F.conv_transpose1d
+
+def _safe_rfft(input, *args, **kwargs):
+    if input.dtype in (torch.bfloat16, torch.float16):
+        input = input.to(torch.float32)
+    return _orig_rfft(input, *args, **kwargs)
+
+def _safe_irfft(input, *args, **kwargs):
+    out = _orig_irfft(input, *args, **kwargs)
+    if out.dtype == torch.float32:
+        out = out.to(torch.bfloat16)
+    return out
+
+def _safe_view_as_complex(input, *args, **kwargs):
+    if input.dtype in (torch.bfloat16, torch.float16):
+        input = input.to(torch.float32)
+    return _orig_view_as_complex(input, *args, **kwargs)
+
+def _safe_complex(real, imag, *args, **kwargs):
+    if real.dtype in (torch.bfloat16, torch.float16):
+        real = real.to(torch.float32)
+    if imag.dtype in (torch.bfloat16, torch.float16):
+        imag = imag.to(torch.float32)
+    return _orig_complex(real, imag, *args, **kwargs)
+
+def _safe_conv1d(input, weight, bias=None, stride=1, padding=0, dilation=1, groups=1):
+    # Align forward wavelet filters to FSDP tensor dtype
+    if weight.dtype != input.dtype:
+        weight = weight.to(input.dtype)
+    if bias is not None and bias.dtype != input.dtype:
+        bias = bias.to(input.dtype)
+    return _orig_conv1d(input, weight, bias, stride, padding, dilation, groups)
+
+def _safe_conv_transpose1d(input, weight, bias=None, stride=1, padding=0, output_padding=0, groups=1, dilation=1):
+    # Align inverse wavelet filters to FSDP tensor dtype
+    if weight.dtype != input.dtype:
+        weight = weight.to(input.dtype)
+    if bias is not None and bias.dtype != input.dtype:
+        bias = bias.to(input.dtype)
+    return _orig_conv_transpose1d(input, weight, bias, stride, padding, output_padding, groups, dilation)
+
+# Override the native PyTorch functions globally
+torch.fft.rfft = _safe_rfft
+torch.fft.irfft = _safe_irfft
+torch.view_as_complex = _safe_view_as_complex
+torch.complex = _safe_complex
+F.conv1d = _safe_conv1d
+F.conv_transpose1d = _safe_conv_transpose1d
+# =======================================================================
 # -----------------------------------------------------------------------
 # 1. Hugging Face Compatibility Wrapper
 # -----------------------------------------------------------------------
@@ -22,7 +84,7 @@ class SpectreLlamaLayerWrapper(nn.Module):
             mlp_ratio=4,          
             use_toeplitz=False, 
             pooling_type="dct",
-            wavelet_on_rate=0.1
+            wavelet_on_rate=1.0
         )
 
     def forward(
@@ -40,17 +102,18 @@ class SpectreLlamaLayerWrapper(nn.Module):
             hidden_states = hidden_states[0]
             
         # 1. Capture the incoming dtype (BFloat16)
-        orig_dtype = hidden_states.dtype
+        #orig_dtype = hidden_states.dtype
         
         # 2. Cast to Float32 for stable FFTs and complex math
-        hidden_states_f32 = hidden_states.to(torch.float32)
+        #hidden_states_f32 = hidden_states.to(torch.float32)
         
         # 3. Process through the SPECTRE block
-        out_f32 = self.spectre(hidden_states_f32)
+        #out_f32 = self.spectre(hidden_states_f32)
         
         # 4. Cast back to the original dtype
-        out = out_f32.to(orig_dtype)
-        
+       # out = out_f32.to(orig_dtype)
+        out =self.spectre(hidden_states)
+
         return out
 
 # -----------------------------------------------------------------------
@@ -60,7 +123,7 @@ def setup_model(model_id="meta-llama/Llama-3.2-1B", seq_len=1024):
     print(f"Loading base config for {model_id}...")
     config = AutoConfig.from_pretrained(model_id)
     
-    model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
+    model = AutoModelForCausalLM.from_config(config, dtype=torch.bfloat16)
     
     print(f"Swapping standard Llama attention layers for SpectreBlocks (n_fft={seq_len})...")
     for i in range(len(model.model.layers)):
